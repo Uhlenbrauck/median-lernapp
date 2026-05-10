@@ -412,7 +412,7 @@ Antworte NUR als JSON ohne Backticks: {"message":"...","stationComplete":false}`
       const callAPI = async (msgs) => {
         const res = await fetch("/api/chat", {
           method:"POST", headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({ model:"claude-haiku-4-5-20251001", max_tokens:600, system:station.systemPrompt, messages:msgs }),
+          body: JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:600, system:station.systemPrompt, messages:msgs }),
         });
         const data = await res.json();
         const text = (data.content || []).map(b=>b.text||"").join("");
