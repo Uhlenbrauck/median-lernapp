@@ -1,0 +1,644 @@
+import { useState, useRef, useEffect } from "react";
+
+// ─── Konfiguration ────────────────────────────────────────────────────────────
+const UNLOCK_CODE       = "median";
+const SM                = ["😁","🙂","😐","🙁","😞"];
+const SM_LABELS         = ["sehr gut","gut","okay","nicht gut","schlecht"];
+const PICKER_SM         = ["😁","🙂","😐","🙁","😞","😋","😑","😕","🤢"];
+const ZIMMER_COUNTS     = [5,8,6,4,2];
+const RESTAURANT_COUNTS = [2,8,7,5,1];
+
+// Unsortierte Rohdaten (wie im Original-Arbeitsblatt)
+const ZIMMER_R1  = "😐🙂😁😞🙂🙁😐🙂😁😐🙁🙂😐";
+const ZIMMER_R2  = "🙂😁🙁😐🙂😞😁🙁😐🙂😁🙂";
+const RESTAU_R1  = "😐🙁🙂😐🙂🙁😐🙂😁🙂🙁😐";
+const RESTAU_R2  = "🙂😞🙂🙁😐🙂😁😐🙁🙂😐";
+
+const C = {
+  bg:"#FFFBF0", card:"#FFFFFF", primary:"#F4A922", primaryDark:"#C8881A",
+  accent:"#3EAD72", text:"#1E1E1E", muted:"#888", border:"#E8D9B0", aiMsg:"#F0FFF8",
+};
+
+// ─── Hilfsfunktion ────────────────────────────────────────────────────────────
+function buildShuffled(counts) {
+  const arr = [];
+  counts.forEach((n,i) => { for (let j=0;j<n;j++) arr.push(i); });
+  for (let i=arr.length-1;i>0;i--) {
+    const j = Math.floor(Math.random()*(i+1));
+    [arr[i],arr[j]] = [arr[j],arr[i]];
+  }
+  return arr.map((smIdx,id) => ({id,smIdx}));
+}
+
+// ─── Smiley-Picker ────────────────────────────────────────────────────────────
+function SmileyPicker({ onInsert }) {
+  return (
+    <div style={{ display:"flex",flexWrap:"wrap",gap:4,padding:"8px 10px",background:"#fff",border:"1px solid #E8D9B0",borderRadius:12,boxShadow:"0 4px 12px rgba(0,0,0,0.1)",marginBottom:6 }}>
+      {PICKER_SM.map(s => (
+        <button key={s} onClick={()=>onInsert(s)}
+          style={{ fontSize:22,padding:"4px 6px",borderRadius:8,border:"1px solid #E8D9B0",background:"#FFFBF0",cursor:"pointer",fontFamily:"inherit" }}>
+          {s}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── Sortier-Werkzeug ─────────────────────────────────────────────────────────
+function ScrambleSort({ counts, rawRows, onComplete, locked }) {
+  const [tiles]    = useState(() => buildShuffled(counts));
+  const [usedIds,  setUsedIds]  = useState(new Set());
+  const [sortList, setSortList] = useState([]);
+  const [error,    setError]    = useState("");
+  const [done,     setDone]     = useState(false);
+  const total = counts.reduce((a,b)=>a+b,0);
+
+  const clickTile = (id,smIdx) => {
+    if (usedIds.has(id)||done||locked) return;
+    setUsedIds(prev => new Set([...prev,id]));
+    setSortList(prev => [...prev,{id,smIdx}]);
+    setError("");
+  };
+  const undo = () => {
+    if (sortList.length===0||done) return;
+    const last = sortList[sortList.length-1];
+    setUsedIds(prev => { const n=new Set(prev); n.delete(last.id); return n; });
+    setSortList(prev => prev.slice(0,-1));
+    setError("");
+  };
+  const reset = () => {
+    if (done) return;
+    setUsedIds(new Set()); setSortList([]); setError("");
+  };
+  const check = () => {
+    if (sortList.length<total) { setError(`Noch ${total-sortList.length} Smiley${total-sortList.length!==1?"s":""} fehlen!`); return; }
+    for (let i=1;i<sortList.length;i++) {
+      if (sortList[i].smIdx<sortList[i-1].smIdx) { setError("Die Reihenfolge stimmt noch nicht. Von 😁 (sehr gut) bis 😞 (schlecht)!"); return; }
+    }
+    setDone(true); setError("");
+    onComplete(sortList.map(it=>SM[it.smIdx]).join(""));
+  };
+
+  const btnBase = { padding:"5px 11px",borderRadius:8,border:"1px solid #ddd",background:"#fff",cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit" };
+
+  return (
+    <div style={{ background:done?"#F0FFF6":"#FFFEF5",border:`2px solid ${done?"#3EAD72":"#E8D9B0"}`,borderRadius:14,padding:14,margin:"8px 0" }}>
+      <div style={{ fontSize:11,fontWeight:800,color:"#888",marginBottom:8,textTransform:"uppercase",letterSpacing:1 }}>
+        Sortierwerkzeug · {done?`✓ Fertig (${total} Smileys)`:`${sortList.length} / ${total} sortiert`}
+      </div>
+
+      {/* Rohdaten zur Referenz */}
+      {rawRows && (
+        <div style={{ background:"#fff",border:"1px solid #E8D9B0",borderRadius:10,padding:"8px 12px",marginBottom:10 }}>
+          <div style={{ fontSize:11,color:"#888",fontWeight:700,marginBottom:4 }}>Die Bewertungen:</div>
+          {rawRows.map((row,i) => <div key={i} style={{ fontSize:20,lineHeight:1.9,letterSpacing:1 }}>{row}</div>)}
+        </div>
+      )}
+
+      {/* Ungeordnete Einzelkacheln */}
+      {!done && (
+        <div style={{ marginBottom:10 }}>
+          <div style={{ fontSize:12,color:"#888",marginBottom:5 }}>
+            Klicke alle Smileys in der richtigen Reihenfolge an – von 😁 (sehr gut) bis 😞 (schlecht):
+          </div>
+          <div style={{ display:"flex",flexWrap:"wrap",gap:4,padding:10,background:"#fff",borderRadius:10,border:"1px solid #E8D9B0",minHeight:52 }}>
+            {tiles.map(({id,smIdx}) => (
+              <button key={id} onClick={()=>clickTile(id,smIdx)} disabled={usedIds.has(id)||locked}
+                style={{ fontSize:20,padding:"5px 7px",borderRadius:8,border:`1px solid ${usedIds.has(id)?"#eee":"#E8D9B0"}`,background:usedIds.has(id)?"#f5f5f5":"#FFFBF0",cursor:usedIds.has(id)?"default":"pointer",opacity:usedIds.has(id)?0.15:1,transition:"opacity 0.15s",fontFamily:"inherit" }}>
+                {SM[smIdx]}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Sortierte Liste */}
+      <div style={{ marginBottom:8 }}>
+        {!done && <div style={{ fontSize:12,color:"#888",marginBottom:4 }}>Deine sortierte Reihenfolge:</div>}
+        <div style={{ minHeight:48,padding:"8px 12px",background:done?"#E8FFF3":"#FFFBF0",border:`2px dashed ${done?"#3EAD72":"#E8D9B0"}`,borderRadius:10,fontSize:22,letterSpacing:1,lineHeight:1.8,wordBreak:"break-all" }}>
+          {sortList.length===0
+            ? <span style={{ color:"#ccc",fontSize:12 }}>Hier erscheinen deine sortierten Smileys…</span>
+            : sortList.map((it,i)=><span key={i}>{SM[it.smIdx]}</span>)
+          }
+        </div>
+      </div>
+
+      {error && <div style={{ color:"#c0392b",fontSize:13,marginBottom:8,padding:"6px 10px",background:"#fff0f0",borderRadius:8,fontWeight:600 }}>{error}</div>}
+
+      {!done ? (
+        <div style={{ display:"flex",gap:8 }}>
+          <button onClick={undo} disabled={sortList.length===0} style={{ ...btnBase,opacity:sortList.length===0?0.4:1 }}>↩ Rückgängig</button>
+          <button onClick={reset} disabled={sortList.length===0} style={{ ...btnBase,opacity:sortList.length===0?0.4:1 }}>↺ Neu</button>
+          <button onClick={check} disabled={sortList.length<total} style={{ ...btnBase,marginLeft:"auto",background:sortList.length>=total?"#3EAD72":"#E0E0E0",color:sortList.length>=total?"#fff":"#aaa",border:"none",cursor:sortList.length>=total?"pointer":"default",opacity:sortList.length<total?0.6:1 }}>✓ Prüfen</button>
+        </div>
+      ) : (
+        <div style={{ color:"#3EAD72",fontWeight:800,fontSize:14 }}>✓ Richtig sortiert! Schreibe jetzt deine Antwort in den Chat unten.</div>
+      )}
+    </div>
+  );
+}
+
+// ─── Intro-Screen ─────────────────────────────────────────────────────────────
+function IntroScreen({ onStart }) {
+  return (
+    <div style={{ maxWidth:600,margin:"20px auto",padding:"0 14px",animation:"fadeUp 0.4s" }}>
+      <div style={{ background:"#fff",border:"2px solid #E8D9B0",borderRadius:20,overflow:"hidden" }}>
+        <div style={{ background:C.primary,padding:"20px 24px",textAlign:"center" }}>
+          <div style={{ fontSize:38 }}>🏨</div>
+          <div style={{ color:"#fff",fontWeight:900,fontSize:22 }}>Hotel Lindenhof</div>
+          <div style={{ color:"rgba(255,255,255,0.85)",fontSize:13,marginTop:2 }}>Beurteilungsbogen</div>
+        </div>
+        <div style={{ padding:"20px 24px" }}>
+          <p style={{ fontSize:14,color:"#555",marginBottom:14,lineHeight:1.6 }}>
+            Das Hotel Lindenhof hat seine Gäste gebeten, Zimmer und Restaurant auf dieser Skala zu bewerten:
+          </p>
+
+          {/* Smiley-Skala */}
+          <div style={{ display:"flex",justifyContent:"center",gap:8,marginBottom:18,padding:"10px 12px",background:"#FFFBF0",borderRadius:12,border:"1px solid #E8D9B0",flexWrap:"wrap" }}>
+            {SM.map((s,i) => (
+              <div key={i} style={{ textAlign:"center",minWidth:50 }}>
+                <div style={{ fontSize:26 }}>{s}</div>
+                <div style={{ fontSize:10,color:"#888",fontWeight:700 }}>{SM_LABELS[i]}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Unsortierte Bewertungslisten */}
+          <div style={{ display:"flex",flexDirection:"column",gap:10,marginBottom:18 }}>
+            {[
+              { label:"(1) für die Zimmer:", rows:[ZIMMER_R1, ZIMMER_R2] },
+              { label:"(2) für das Restaurant:", rows:[RESTAU_R1, RESTAU_R2] },
+            ].map(({label,rows}) => (
+              <div key={label} style={{ background:"#FFFBF0",borderRadius:12,border:"1px solid #E8D9B0",padding:"10px 14px" }}>
+                <div style={{ fontWeight:800,fontSize:13,marginBottom:6,color:"#333" }}>{label}</div>
+                {rows.map((row,i) => <div key={i} style={{ fontSize:21,lineHeight:1.9,letterSpacing:1 }}>{row}</div>)}
+              </div>
+            ))}
+          </div>
+
+          <div style={{ fontSize:13,color:"#666",marginBottom:18,lineHeight:1.6,background:"#FFF8E7",padding:"10px 14px",borderRadius:10,border:"1px solid #F4D080" }}>
+            <strong>Eure Aufgabe:</strong> Ihr wisst bereits, dass man hier kein arithmetisches Mittel berechnen kann. Findet gemeinsam mit der KI eine bessere Methode!
+          </div>
+
+          <button onClick={onStart} style={{ background:C.primary,color:"#fff",border:"none",borderRadius:24,padding:"13px 0",fontSize:16,fontWeight:900,cursor:"pointer",width:"100%",boxShadow:"0 4px 14px rgba(244,169,34,0.35)" }}>
+            Los geht's 🚀
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Stationen ────────────────────────────────────────────────────────────────
+const STATIONS = [
+  {
+    id:1, title:"Eine neue Idee", icon:"💡",
+    description:"Wie finden wir ohne Rechnen einen typischen Wert?",
+    hasSortWidget:false, hasCodeUnlock:false,
+    systemPrompt:`Du bist ein freundlicher Lernbegleiter für Klasse 6 (Gymnasium NRW). Nur fragen, nie erklären. Kurze Sätze. Du duzt.
+
+KONTEXT: Die Schülerin/der Schüler weiß, dass das arithmetische Mittel für Smiley-Bewertungen des Hotel Lindenhof nicht sinnvoll ist.
+
+Stelle als erste Nachricht genau diese Frage:
+"Wenn du 25 ausgefüllte Fragebögen vor dir hättest – was könntest du tun, um einen typischen Wert zu finden, ohne zu rechnen?"
+
+Hake nach, bis "sortieren und den mittleren Wert nehmen" klar formuliert ist. Dann sage: "Genau! Dieser mittlere Wert hat einen Namen: den Median." und setze stationComplete auf true.
+
+Antworte NUR als JSON ohne Backticks: {"message":"...","stationComplete":false}`,
+  },
+  {
+    id:2, title:"Zimmer sortieren", icon:"🏨",
+    description:"Alle 25 Zimmer-Smileys einzeln sortieren",
+    hasSortWidget:true, sortCounts:ZIMMER_COUNTS,
+    rawRows:[ZIMMER_R1, ZIMMER_R2], hasCodeUnlock:false,
+    systemPrompt:`Du bist ein freundlicher Lernbegleiter für Klasse 6. Kurze Sätze. Du duzt.
+
+KONTEXT: Zimmerbewertungen des Hotel Lindenhof (25 Stück, unsortiert):
+Zeile 1: 😐🙂😁😞🙂🙁😐🙂😁😐🙁🙂😐
+Zeile 2: 🙂😁🙁😐🙂😞😁🙁😐🙂😁🙂
+
+Erste Nachricht: "Nutze das Sortierfeld oben – klicke alle 25 Zimmer-Smileys in der richtigen Reihenfolge an, von 😁 bis 😞. Wenn du fertig bist: Welcher Smiley steht genau in der Mitte?"
+
+Wenn die sortierte Liste kommt: Frage "Wie hast du die Mitte gefunden? Welche Position ist das genau?"
+Ziel: Der 13. Wert = 🙂. Führe durch Nachfragen, nie durch Erklären.
+Wenn korrekt erkannt und begründet: frage noch "Was bedeutet das für das Hotel? Erkläre es in einem Satz."
+Wenn beantwortet: stationComplete = true.
+
+Antworte NUR als JSON ohne Backticks: {"message":"...","stationComplete":false}`,
+  },
+  {
+    id:3, title:"Restaurant sortieren", icon:"🍽️",
+    description:"Alle 23 Restaurant-Smileys sortieren und Median finden",
+    hasSortWidget:true, sortCounts:RESTAURANT_COUNTS,
+    rawRows:[RESTAU_R1, RESTAU_R2], hasCodeUnlock:false,
+    systemPrompt:`Du bist ein freundlicher Lernbegleiter für Klasse 6. Kurze Sätze. Du duzt.
+
+KONTEXT: Restaurantbewertungen des Hotel Lindenhof (23 Stück, unsortiert):
+Zeile 1: 😐🙁🙂😐🙂🙁😐🙂😁🙂🙁😐
+Zeile 2: 🙂😞🙂🙁😐🙂😁😐🙁🙂😐
+
+Erste Nachricht: "Jetzt das Restaurant! Sortiere alle 23 Smileys mit dem Sortierfeld. Dann: Welcher steht genau in der Mitte?"
+
+Ziel: Der 12. Wert = 😐. Führe durch Nachfragen.
+Wenn korrekt erkannt und begründet: sage "Genau! Der Median der Restaurantbewertungen ist 😐." und stationComplete = true.
+
+Antworte NUR als JSON ohne Backticks: {"message":"...","stationComplete":false}`,
+  },
+  {
+    id:4, title:"Denkaufgabe", icon:"🤔",
+    description:"Was passiert bei einer geraden Anzahl von Werten?",
+    hasSortWidget:false, hasCodeUnlock:false,
+    systemPrompt:`Du bist ein freundlicher Lernbegleiter für Klasse 6. Kurze Sätze. Du duzt.
+Benutze immer "arithmetisches Mittel" statt "Mittelwert".
+
+Führe die Schülerin/den Schüler durch genau diese drei Beispiele in dieser Reihenfolge:
+
+BEISPIEL 1 – gerade Anzahl, beide mittleren Werte GLEICH:
+"Denkaufgabe! 8 Gäste haben das Frühstück bewertet:
+😁:1× 🙂:4× 😐:2× 🙁:1×
+Sortiere im Kopf. Welche zwei Smileys stehen in der Mitte?"
+→ 4. Wert = 🙂, 5. Wert = 🙂 → Median = 🙂
+Wenn korrekt: Bestätige kurz, weiter mit Beispiel 2.
+
+BEISPIEL 2 – gerade Anzahl, beide mittleren Werte VERSCHIEDEN:
+"Neues Beispiel. Jetzt 8 andere Gäste:
+😁:1× 🙂:3× 😐:3× 🙁:1×
+Welche zwei Smileys stehen diesmal in der Mitte?"
+→ 4. Wert = 🙂, 5. Wert = 😐 → nicht eindeutig bestimmbar
+Wenn erkannt: erkläre direkt (neue Information, die du geben darfst):
+"Genau! Bei Smileys oder Wörtern gilt: Bei gerader Anzahl lässt sich der Median nur eindeutig angeben, wenn beide mittleren Werte gleich sind. Bei Zahlen kann man das arithmetische Mittel der beiden mittleren Werte berechnen."
+Weiter mit Beispiel 3.
+
+BEISPIEL 3 – gerade Anzahl, Zahlen, arithmetisches Mittel berechnen:
+"Die Wetterstation des Hotel Lindenhof hat 6 Tage lang die Höchsttemperatur gemessen:
+18 °C, 23 °C, 15 °C, 25 °C, 21 °C, 19 °C
+Das Hotel möchte den Median der Temperaturen veröffentlichen. Berechne ihn!"
+→ Die Daten sind NICHT sortiert – Schüler muss selbst sortieren: 15, 18, 19, 21, 23, 25
+→ 3. Wert = 19, 4. Wert = 21 → arithmetisches Mittel: (19+21)÷2 = 20 °C
+
+WICHTIG: Sage niemals "sortiere die Anzahlen" – nur die Datenwerte selbst werden sortiert.
+Wenn Beispiel 3 korrekt gelöst: stationComplete = true.
+
+Antworte NUR als JSON ohne Backticks: {"message":"...","stationComplete":false}`,
+  },
+  {
+    id:5, title:"Übersicht erstellen", icon:"📝",
+    description:"Schreibe deine Übersicht ins Heft – Lehrkraft gibt den Code",
+    hasSortWidget:false, hasCodeUnlock:true,
+    systemPrompt:`Du bist ein freundlicher Lernbegleiter für Klasse 6. Kurze Sätze. Du duzt.
+Benutze immer "arithmetisches Mittel" statt "Mittelwert".
+
+Erste Nachricht: "Erstelle jetzt deine Übersicht 'Median bestimmen – Schritt für Schritt' in deinem Heft. Unterscheide: ungerade und gerade Anzahl von Werten. Wenn du fertig bist, zeige sie deiner Lehrkraft – die gibt dir dann den Code zum Weitermachen.
+
+Hast du noch Fragen oder möchtest du vorher ein Beispiel?"
+
+Wenn Fragen kommen oder ein Beispiel gewünscht wird:
+- Beantworte Fragen auf Klasse-6-Niveau.
+- Gib kurze Beispiele mit Smileys oder Zahlen – die Daten immer UNSORTIERT angeben.
+- Wenn die Schülerin/der Schüler "leichter" sagt: einfachere Beispiele mit kleinerer Datenmenge.
+- Wenn "schwieriger" gesagt wird: anspruchsvollere Beispiele oder gerade Anzahl.
+- Prüfe die Übersicht NICHT – das macht die Lehrkraft.
+- Du setzt stationComplete NIE auf true.
+
+Antworte NUR als JSON ohne Backticks: {"message":"...","stationComplete":false}`,
+  },
+  {
+    id:6, title:"Übungsaufgaben", icon:"✏️",
+    description:"Wähle dein Niveau und übe den Median",
+    hasSortWidget:false, hasCodeUnlock:false,
+    systemPrompt:`Du bist ein freundlicher Lernbegleiter für Klasse 6. Du duzt.
+Benutze immer "arithmetisches Mittel" statt "Mittelwert".
+
+Stelle als ERSTE Nachricht NUR diese Frage:
+"Wie sicher fühlst du dich beim Median schon?
+🟢 Sicher – ich will anspruchsvolle Aufgaben
+🟡 Geht so – ich brauche noch etwas Übung
+🔴 Unsicher – ich brauche noch viel Hilfe"
+
+Warte auf die Antwort. Passe deine Aufgaben dann so an:
+
+🔴 UNSICHER – Niveau 1:
+- Gib 5–7 unsortierte Werte, führe Schritt für Schritt durch jeden Schritt
+- Einfache Kontexte: Smileys, kurze Zahlenreihen
+- Viel Hilfe und Erklärung erlaubt
+- Beginne mit ungerader Anzahl
+
+🟡 GEHT SO – Niveau 2:
+- Gib 7–11 unsortierte Werte, wenig Hilfe
+- Mix aus Smileys und Zahlen, auch gerade Anzahl mit arithmetischem Mittel
+- Nur auf Nachfrage helfen
+
+🟢 SICHER – Niveau 3:
+- Gib 9–15 unsortierte Werte, keine Hilfe außer Richtig/Falsch
+- Anspruchsvolle Kontexte, gerade und ungerade Anzahl
+- Auch: zwei Datensätze vergleichen, oder selbst entscheiden welcher Mittelwert sinnvoller ist
+
+WICHTIG bei ALLEN Niveaus:
+- Daten IMMER unsortiert angeben
+- NIE die Häufigkeiten/Anzahlen sortieren, nur die Datenwerte selbst
+- "arithmetisches Mittel", nicht "Mittelwert"
+- Nach jeder gelösten Aufgabe fragen: "Möchtest du eine weitere Aufgabe? Leichter, gleich schwer oder schwieriger?"
+- Die Schülerin/der Schüler kann jederzeit das Niveau wechseln
+
+stationComplete = true erst nach mindestens 2 korrekt gelösten Aufgaben.
+
+Antworte NUR als JSON ohne Backticks: {"message":"...","stationComplete":false}`,
+  },
+  {
+    id:7, title:"Sprinteraufgabe", icon:"⚡",
+    description:"Kann man Smileys doch ein arithmetisches Mittel zuordnen?",
+    hasSortWidget:false, hasCodeUnlock:false,
+    systemPrompt:`Du bist ein freundlicher Lernbegleiter für Klasse 6. Kurze Sätze. Du duzt.
+Benutze immer "arithmetisches Mittel" statt "Mittelwert".
+
+Erste Nachricht: "Du weißt jetzt, dass man bei Smiley-Bewertungen kein arithmetisches Mittel berechnen kann. Aber: Gibt es trotzdem eine Möglichkeit? Denk nach – wie könnte man vorgehen?"
+
+Ziel: Die Schülerin/der Schüler soll SELBST und OHNE jeden Hinweis auf die Idee kommen, den Smileys Zahlen zuzuordnen.
+
+REGEL: Gib keinen einzigen Hinweis, egal was gefragt wird. Wenn nach Hilfe gefragt wird, sage nur: "Denk nochmal nach – ich bin gespannt auf deine Idee." Kein weiterer Hinweis.
+
+Wenn die Idee "Smileys durch Zahlen ersetzen" oder "Zahlen zuordnen" kommt:
+1. Bitte: "Gut! Welche Zahl gibst du welchem Smiley? Schreib die Zuordnung auf."
+2. Wenn die Zuordnung sinnvoll und konsistent ist (z.B. 😁=1 bis 😞=5 oder umgekehrt):
+   Bestätige kurz. Bitte dann:
+   "Berechne jetzt das arithmetische Mittel für die Zimmer-Bewertungen mit deiner Zuordnung.
+   Die Bewertungen:
+   Zeile 1: 😐🙂😁😞🙂🙁😐🙂😁😐🙁🙂😐
+   Zeile 2: 🙂😁🙁😐🙂😞😁🙁😐🙂😁🙂"
+3. Begleite die Berechnung. Wenn korrekt abgeschlossen: sage "Sehr gut! Du hast den Smileys Zahlen zugeordnet und damit das arithmetische Mittel berechnet – eine weitere Möglichkeit, Daten auszuwerten." und stationComplete = true.
+
+Antworte NUR als JSON ohne Backticks: {"message":"...","stationComplete":false}`,
+  },
+];
+
+// ─── Haupt-App ────────────────────────────────────────────────────────────────
+export default function MedianLernApp() {
+  const [showIntro,       setShowIntro]       = useState(true);
+  const [stationIdx,      setStationIdx]      = useState(0);
+  const [messages,        setMessages]        = useState([]);
+  const [input,           setInput]           = useState("");
+  const [loading,         setLoading]         = useState(false);
+  const [stationComplete, setStationComplete] = useState(false);
+  const [started,         setStarted]         = useState(false);
+  const [sortDone,        setSortDone]        = useState(false);
+  const [completed,       setCompleted]       = useState([]);
+  const [showPicker,      setShowPicker]      = useState(false);
+  const [codeInput,       setCodeInput]       = useState("");
+  const [codeUnlocked,    setCodeUnlocked]    = useState(false);
+  const [codeError,       setCodeError]       = useState("");
+
+  const messagesEndRef = useRef(null);
+  const inputRef       = useRef(null);
+  const messagesRef    = useRef([]);
+
+  const station   = STATIONS[stationIdx] ?? null;
+  const allDone   = stationIdx >= STATIONS.length;
+  const canGoNext = station?.hasCodeUnlock ? codeUnlocked : stationComplete;
+
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages, loading]);
+
+  const callAPI = async (msgs) => {
+    const res = await fetch("/api/chat", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:600, system:station.systemPrompt, messages:msgs }),
+    });
+    const data = await res.json();
+    const text = data.content.map(b=>b.text||"").join("");
+    const m    = text.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error("no JSON");
+    return JSON.parse(m[0]);
+  };
+
+  const startStation = async () => {
+    setMessages([]); messagesRef.current = [];
+    setStationComplete(false); setSortDone(false); setStarted(true); setLoading(true);
+    setCodeInput(""); setCodeUnlocked(false); setCodeError("");
+    try {
+      const parsed = await callAPI([{role:"user",content:"Ich bin bereit."}]);
+      const init = [{role:"assistant",content:parsed.message}];
+      setMessages(init); messagesRef.current = init;
+      if (parsed.stationComplete && !station.hasCodeUnlock) setStationComplete(true);
+    } catch {
+      const e = [{role:"assistant",content:"Hoppla, etwas ist schiefgelaufen. Bitte neu laden."}];
+      setMessages(e); messagesRef.current = e;
+    }
+    setLoading(false);
+    setTimeout(()=>inputRef.current?.focus(),100);
+  };
+
+  const sendMessage = async (customMsg) => {
+    const userMsg = (customMsg ?? input).trim();
+    if (!userMsg||loading) return;
+    if (!customMsg) setInput("");
+    setShowPicker(false);
+    const newMsgs = [...messagesRef.current, {role:"user",content:userMsg}];
+    setMessages(newMsgs); messagesRef.current = newMsgs;
+    setLoading(true);
+    try {
+      const parsed = await callAPI(newMsgs);
+      const withAI = [...newMsgs, {role:"assistant",content:parsed.message}];
+      setMessages(withAI); messagesRef.current = withAI;
+      if (parsed.stationComplete && !station.hasCodeUnlock) setStationComplete(true);
+    } catch {
+      const withErr = [...newMsgs, {role:"assistant",content:"Hoppla, etwas ist schiefgelaufen. Versuche es nochmal."}];
+      setMessages(withErr); messagesRef.current = withErr;
+    }
+    setLoading(false);
+    setTimeout(()=>inputRef.current?.focus(),100);
+  };
+
+  const handleSortComplete = (sortedStr) => {
+    setSortDone(true);
+    sendMessage(`Ich habe alle Smileys sortiert: ${sortedStr}`);
+  };
+
+  const checkCode = () => {
+    if (codeInput.trim().toLowerCase() === UNLOCK_CODE) {
+      setCodeUnlocked(true); setCodeError("");
+    } else {
+      setCodeError("Falscher Code – frag deine Lehrkraft!");
+    }
+  };
+
+  const goNext = () => {
+    setCompleted(p => [...new Set([...p,stationIdx])]);
+    setStationIdx(i=>i+1);
+    setStarted(false); setStationComplete(false); setSortDone(false);
+    setMessages([]); setInput(""); messagesRef.current = [];
+    setShowPicker(false); setCodeInput(""); setCodeUnlocked(false); setCodeError("");
+  };
+
+  const handleKey = (e) => { if (e.key==="Enter"&&!e.shiftKey) { e.preventDefault(); sendMessage(); } };
+  const insertSmiley = (s) => { setInput(prev=>prev+s); inputRef.current?.focus(); };
+
+  const inputDisabled = loading || stationComplete || (station?.hasSortWidget && !sortDone);
+
+  if (showIntro) return (
+    <div style={{ minHeight:"100vh",background:C.bg,fontFamily:"'Nunito','Segoe UI',sans-serif" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@500;700;800;900&display=swap'); *{box-sizing:border-box;margin:0;padding:0;} @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}} button{font-family:inherit;}`}</style>
+      <IntroScreen onStart={()=>setShowIntro(false)}/>
+    </div>
+  );
+
+  return (
+    <div style={{ minHeight:"100vh",background:C.bg,fontFamily:"'Nunito','Segoe UI',sans-serif",display:"flex",flexDirection:"column" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@500;700;800;900&display=swap');
+        *{box-sizing:border-box;margin:0;padding:0;}
+        @keyframes bounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-5px)}}
+        @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+        textarea:focus{outline:none;border-color:${C.primary}!important;box-shadow:0 0 0 3px rgba(244,169,34,0.18);}
+        button{font-family:inherit;}
+        ::-webkit-scrollbar{width:5px;}
+        ::-webkit-scrollbar-thumb{background:${C.border};border-radius:3px;}
+      `}</style>
+
+      {/* Header */}
+      <div style={{ background:C.primary,padding:"13px 20px",display:"flex",alignItems:"center",gap:12,boxShadow:"0 2px 10px rgba(0,0,0,0.12)",flexShrink:0 }}>
+        <span style={{ fontSize:26 }}>📊</span>
+        <div>
+          <div style={{ color:"#fff",fontWeight:900,fontSize:17 }}>Median entdecken</div>
+          <div style={{ color:"rgba(255,255,255,0.8)",fontSize:12 }}>Hotel Lindenhof · Klasse 6</div>
+        </div>
+        <div style={{ marginLeft:"auto",background:"rgba(255,255,255,0.25)",color:"#fff",borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:800 }}>
+          {completed.length} / {STATIONS.length} ✓
+        </div>
+      </div>
+
+      {/* Progress */}
+      <div style={{ background:"#fff",borderBottom:`1px solid ${C.border}`,padding:"10px 16px",flexShrink:0,overflowX:"auto" }}>
+        <div style={{ display:"flex",alignItems:"center",minWidth:"max-content" }}>
+          {STATIONS.map((s,i) => {
+            const done=completed.includes(i), active=i===stationIdx;
+            return (
+              <div key={i} style={{ display:"flex",alignItems:"center" }}>
+                <div title={s.title} style={{ width:32,height:32,borderRadius:"50%",background:done?C.accent:active?C.primary:"#EEE",display:"flex",alignItems:"center",justifyContent:"center",fontSize:done?13:15,border:active?`3px solid ${C.primaryDark}`:"3px solid transparent",boxShadow:active?`0 0 0 3px rgba(244,169,34,0.22)`:"none",color:done||active?"#fff":"#999",fontWeight:900,transition:"all 0.3s",flexShrink:0 }}>
+                  {done?"✓":s.icon}
+                </div>
+                {i<STATIONS.length-1 && <div style={{ width:16,height:2,background:done?C.accent:"#E0E0E0",transition:"background 0.3s" }}/>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Content */}
+      <div style={{ flex:1,display:"flex",flexDirection:"column",maxWidth:740,width:"100%",margin:"0 auto",padding:"0 14px 20px",minHeight:0 }}>
+        {allDone ? (
+          <div style={{ textAlign:"center",padding:"60px 20px",animation:"fadeUp 0.5s" }}>
+            <div style={{ fontSize:60 }}>🎉</div>
+            <div style={{ fontSize:24,fontWeight:900,color:C.accent,margin:"12px 0 8px" }}>Alle Stationen geschafft!</div>
+            <div style={{ color:C.muted,fontSize:15 }}>Du hast den Median vollständig erarbeitet.</div>
+          </div>
+        ) : station && (
+          <>
+            {/* Station card */}
+            <div style={{ background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:"13px 16px",margin:"12px 0 6px",display:"flex",alignItems:"center",gap:12,animation:"fadeUp 0.3s" }}>
+              <span style={{ fontSize:28 }}>{station.icon}</span>
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:10,color:C.muted,fontWeight:800,textTransform:"uppercase",letterSpacing:1.2 }}>Station {station.id} von {STATIONS.length}</div>
+                <div style={{ fontSize:16,fontWeight:900,color:C.text }}>{station.title}</div>
+                <div style={{ fontSize:12,color:C.muted }}>{station.description}</div>
+              </div>
+              {canGoNext && <div style={{ background:C.accent,color:"#fff",borderRadius:20,padding:"4px 12px",fontSize:12,fontWeight:800,flexShrink:0 }}>✓ Geschafft!</div>}
+            </div>
+
+            {/* Sort widget */}
+            {started && station.hasSortWidget && (
+              <ScrambleSort counts={station.sortCounts} rawRows={station.rawRows} onComplete={handleSortComplete} locked={sortDone}/>
+            )}
+
+            {/* Chat */}
+            <div style={{ background:C.card,border:`1px solid ${C.border}`,borderRadius:16,display:"flex",flexDirection:"column",overflow:"hidden",flex:1,minHeight:200,maxHeight:360,marginBottom:6 }}>
+              {!started ? (
+                <div style={{ flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32,gap:12 }}>
+                  <span style={{ fontSize:40 }}>{station.icon}</span>
+                  <div style={{ color:C.muted,fontSize:14 }}>Bereit für Station {station.id}?</div>
+                  <button onClick={startStation} style={{ background:C.primary,color:"#fff",border:"none",borderRadius:24,padding:"11px 34px",fontSize:15,fontWeight:900,cursor:"pointer",boxShadow:"0 4px 14px rgba(244,169,34,0.35)" }}>
+                    Los geht's 🚀
+                  </button>
+                </div>
+              ) : (
+                <div style={{ flex:1,overflowY:"auto",padding:12,display:"flex",flexDirection:"column",gap:8 }}>
+                  {messages.map((m,i) => (
+                    <div key={i} style={{ display:"flex",flexDirection:m.role==="user"?"row-reverse":"row",gap:8,alignItems:"flex-end",animation:"fadeUp 0.2s" }}>
+                      {m.role==="assistant" && <div style={{ width:28,height:28,borderRadius:"50%",background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,flexShrink:0,color:"#fff",fontWeight:800 }}>KI</div>}
+                      <div style={{ maxWidth:"78%",padding:"9px 13px",background:m.role==="user"?C.primary:C.aiMsg,color:m.role==="user"?"#fff":C.text,borderRadius:m.role==="user"?"14px 14px 4px 14px":"14px 14px 14px 4px",fontSize:14,lineHeight:1.6,fontWeight:500,border:m.role==="assistant"?"1px solid #C0EDD8":"none",whiteSpace:"pre-wrap",wordBreak:"break-word" }}>
+                        {m.content}
+                      </div>
+                    </div>
+                  ))}
+                  {loading && (
+                    <div style={{ display:"flex",gap:8,alignItems:"flex-end" }}>
+                      <div style={{ width:28,height:28,borderRadius:"50%",background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#fff",fontWeight:800 }}>KI</div>
+                      <div style={{ padding:"10px 14px",background:C.aiMsg,borderRadius:"14px 14px 14px 4px",border:"1px solid #C0EDD8",display:"flex",gap:4 }}>
+                        {[0,1,2].map(j=><div key={j} style={{ width:7,height:7,borderRadius:"50%",background:C.accent,animation:`bounce 1s ${j*0.2}s infinite` }}/>)}
+                      </div>
+                    </div>
+                  )}
+                  <div ref={messagesEndRef}/>
+                </div>
+              )}
+            </div>
+
+            {/* Input */}
+            {started && (
+              <div style={{ marginBottom:6 }}>
+                {showPicker && <SmileyPicker onInsert={insertSmiley}/>}
+                <div style={{ background:C.card,border:`1px solid ${C.border}`,borderRadius:13,padding:9,display:"flex",gap:8,alignItems:"flex-end" }}>
+                  {station.hasSortWidget && !sortDone ? (
+                    <div style={{ flex:1,padding:"10px 12px",background:"#f7f7f7",borderRadius:9,fontSize:13,color:C.muted,border:`1px solid ${C.border}` }}>
+                      Erst das Sortierfeld oben ausfüllen und auf „Prüfen" klicken…
+                    </div>
+                  ) : (
+                    <>
+                      <button onClick={()=>setShowPicker(p=>!p)} disabled={inputDisabled}
+                        style={{ fontSize:18,padding:"0 8px",height:42,borderRadius:9,border:`1px solid ${C.border}`,background:showPicker?"#FFF3D0":"#fff",cursor:inputDisabled?"default":"pointer",flexShrink:0 }}
+                        title="Smiley einfügen">😊</button>
+                      <textarea ref={inputRef} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={handleKey} disabled={inputDisabled}
+                        placeholder={canGoNext?"Station abgeschlossen ✓":"Deine Antwort…"} rows={1}
+                        style={{ flex:1,border:`1px solid ${C.border}`,borderRadius:9,padding:"9px 12px",fontSize:14,fontFamily:"inherit",resize:"none",minHeight:42,maxHeight:100,background:canGoNext?"#f9f9f9":"#fff",color:C.text }}/>
+                      <button onClick={()=>sendMessage()} disabled={inputDisabled||!input.trim()}
+                        style={{ background:!inputDisabled&&input.trim()?C.primary:"#E0E0E0",color:!inputDisabled&&input.trim()?"#fff":"#bbb",border:"none",borderRadius:9,width:42,height:42,fontSize:18,cursor:!inputDisabled&&input.trim()?"pointer":"default",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",transition:"background 0.2s" }}>➤</button>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Code-Entsperrung */}
+            {started && station.hasCodeUnlock && !codeUnlocked && (
+              <div style={{ background:"#FFF8E7",border:"1px solid #F4D080",borderRadius:13,padding:"12px 14px",marginBottom:6 }}>
+                <div style={{ fontSize:13,fontWeight:700,color:"#7A5A00",marginBottom:8 }}>
+                  🔒 Übersicht fertig? Gib den Code ein, den du von deiner Lehrkraft bekommst:
+                </div>
+                <div style={{ display:"flex",gap:8 }}>
+                  <input value={codeInput} onChange={e=>setCodeInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&checkCode()}
+                    placeholder="Code eingeben…"
+                    style={{ flex:1,border:"1px solid #F4D080",borderRadius:9,padding:"9px 12px",fontSize:14,fontFamily:"inherit",outline:"none",background:"#fff" }}/>
+                  <button onClick={checkCode} style={{ background:C.primary,color:"#fff",border:"none",borderRadius:9,padding:"0 18px",fontSize:14,fontWeight:800,cursor:"pointer",height:42,flexShrink:0 }}>
+                    Entsperren 🔓
+                  </button>
+                </div>
+                {codeError && <div style={{ color:"#c0392b",fontSize:13,marginTop:6,fontWeight:600 }}>{codeError}</div>}
+              </div>
+            )}
+            {started && station.hasCodeUnlock && codeUnlocked && (
+              <div style={{ background:"#E8FFF3",border:"1px solid #3EAD72",borderRadius:13,padding:"10px 14px",marginBottom:6,color:"#3EAD72",fontWeight:800,fontSize:14 }}>
+                ✓ Code korrekt – gut gemacht!
+              </div>
+            )}
+
+            {/* Weiter-Button */}
+            {canGoNext && (
+              <button onClick={goNext} style={{ background:C.accent,color:"#fff",border:"none",borderRadius:24,padding:"12px 24px",fontSize:15,fontWeight:900,cursor:"pointer",width:"100%",boxShadow:"0 4px 16px rgba(62,173,114,0.35)",animation:"fadeUp 0.3s" }}>
+                {stationIdx<STATIONS.length-1 ? `Weiter → Station ${stationIdx+2}: ${STATIONS[stationIdx+1].title} ${STATIONS[stationIdx+1].icon}` : "🎉 Alle Stationen abgeschlossen!"}
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
